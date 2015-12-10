@@ -19,6 +19,10 @@ class UsageTest {
         Member(row.int("id")!!, row.string("name"), row.zonedDateTime("created_at")!!)
     }
 
+    val toMemberReflection: (Row) -> Member = { row ->
+        Member(row.get(Member::id)!!, row.get(Member::name), row.get(Member::createdAt)!!)
+    }
+
     val insert = "insert into members (name,  created_at) values (?, ?)"
 
     fun borrowConnection(): java.sql.Connection {
@@ -165,6 +169,49 @@ create table members (
             }
             val ids: List<Int> = session.list(queryOf("select id from members")) { row -> row.int("id") }
             assertEquals(2, ids.size)
+        }
+    }
+
+    @Test
+    fun reflectionUsage() {
+        using(borrowConnection()) { conn ->
+
+            val session = Session(Connection(conn, driverName))
+
+            session.run(queryOf("drop table members if exists").asExecute)
+            session.run(queryOf("""
+create table members (
+  id serial not null primary key,
+  name varchar(64),
+  created_at timestamp not null
+)
+        """).asExecute)
+
+            session.run(queryOf(insert, "Alice", Date()).asUpdate)
+            session.run(queryOf(insert, "Bob", Date()).asUpdate)
+
+            val ids: List<Int> = session.run(queryOf("select id from members").map { row -> row.int("id") }.asList)
+            assertEquals(2, ids.size)
+
+            val members: List<Member> = session.run(queryOf("select id, name, created_at from members").map(toMemberReflection).asList)
+            assertEquals(2, members.size)
+
+            var count = 0
+            session.forEach(queryOf("select id from members")) { row ->
+                count++
+                assertNotNull(row.int("id"))
+            }
+            assertEquals(2, count)
+
+            val nameQuery = "select id, name, created_at from members where name = ?"
+            val alice: Member? = session.run(queryOf(nameQuery, "Alice").map(toMemberReflection).asSingle)
+            assertNotNull(alice)
+
+            val bob: Member? = session.run(queryOf(nameQuery, "Bob").map(toMemberReflection).asSingle)
+            assertNotNull(bob)
+
+            val chris: Member? = session.run(queryOf(nameQuery, "Chris").map(toMemberReflection).asSingle)
+            assertNull(chris)
         }
     }
 
